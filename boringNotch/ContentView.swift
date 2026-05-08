@@ -534,7 +534,7 @@ struct ContentView: View {
     func LyricsLiveExtension() -> some View {
         TimelineView(.animation(minimumInterval: 0.25)) { timeline in
             let line = currentLyricLine(at: timeline.date)
-            let isPersian = line.unicodeScalars.contains { scalar in
+            let isPersian = line.text.unicodeScalars.contains { scalar in
                 let value = scalar.value
                 return value >= 0x0600 && value <= 0x06FF
             }
@@ -554,17 +554,18 @@ struct ContentView: View {
         }
     }
 
-    private func lyricsLine(_ line: String, isPersian: Bool) -> some View {
+    private func lyricsLine(_ line: ActiveLyricLine, isPersian: Bool) -> some View {
         OneShotLyricText(
-            text: line,
+            text: line.text,
             font: isPersian
                 ? .custom("Vazirmatn-Regular", size: musicLiveLyricsFontSize)
                 : .system(size: musicLiveLyricsFontSize, weight: .medium),
             textColor: musicManager.isFetchingLyrics ? .gray.opacity(0.7) : lyricsAccentColor,
             startDelay: 0,
+            availableDuration: line.availableDuration,
             frameWidth: max(0, musicLiveActivityWidth - 24)
         )
-        .id(line)
+        .id("\(line.text)-\(line.startTime ?? -1)")
     }
 
     private var lyricsAccentColor: Color {
@@ -573,16 +574,12 @@ struct ContentView: View {
             : .gray
     }
 
-    private func currentLyricLine(at date: Date) -> String {
+    private func currentLyricLine(at date: Date) -> ActiveLyricLine {
         if musicManager.isFetchingLyrics {
-            return "Loading lyrics..."
+            return ActiveLyricLine(text: "Loading lyrics...", startTime: nil, nextStartTime: nil)
         }
 
-        if !musicManager.syncedLyrics.isEmpty {
-            return musicManager.lyricLine(at: musicManager.estimatedPlaybackPosition(at: date))
-        }
-
-        return musicManager.plainLyricLine(at: musicManager.estimatedPlaybackPosition(at: date))
+        return musicManager.activeLyricLine(at: musicManager.estimatedPlaybackPosition(at: date))
     }
 
     @ViewBuilder
@@ -738,6 +735,7 @@ private struct OneShotLyricText: View {
     let font: Font
     let textColor: Color
     let startDelay: Double
+    let availableDuration: Double?
     let frameWidth: CGFloat
 
     @State private var textSize: CGSize = .zero
@@ -795,11 +793,20 @@ private struct OneShotLyricText: View {
             guard !Task.isCancelled else { return }
 
             let distance = max(0, textSize.width - frameWidth)
-            let duration = max(1.4, min(8, Double(distance / 34)))
+            let duration = scrollDuration(for: distance)
             withAnimation(.linear(duration: duration)) {
                 offset = -distance
             }
         }
+    }
+
+    private func scrollDuration(for distance: CGFloat) -> Double {
+        let naturalDuration = max(1.4, min(8, Double(distance / 34)))
+        guard let availableDuration else { return naturalDuration }
+
+        let reservedTime = startDelay + 0.18
+        let timedDuration = max(0.35, availableDuration - reservedTime)
+        return min(naturalDuration, timedDuration)
     }
 }
 

@@ -63,6 +63,17 @@ private struct LyricsFetchResult {
     let chorusMarkers: [Double]
 }
 
+struct ActiveLyricLine: Equatable {
+    let text: String
+    let startTime: Double?
+    let nextStartTime: Double?
+
+    var availableDuration: Double? {
+        guard let startTime, let nextStartTime, nextStartTime > startTime else { return nil }
+        return nextStartTime - startTime
+    }
+}
+
 private struct ChineseMusicLyricsProvider {
     private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 
@@ -451,6 +462,7 @@ class MusicManager: ObservableObject {
     @Published var chorusMarkers: [Double] = []
 
     private var artworkData: Data? = nil
+    private var lyricsRequestID = UUID()
 
     // Store last values at the time artwork was changed
     private var lastArtworkTitle: String = "I'm Handsome"
@@ -524,6 +536,7 @@ class MusicManager: ObservableObject {
     }
 
     private func clearLyrics() {
+        lyricsRequestID = UUID()
         DispatchQueue.main.async {
             self.isFetchingLyrics = false
             self.currentLyrics = ""
@@ -812,15 +825,18 @@ class MusicManager: ObservableObject {
             return
         }
 
+        let requestID = UUID()
+        lyricsRequestID = requestID
+
         if let platform = ChineseMusicPlatform(bundleIdentifier: bundleIdentifier) {
             Task { @MainActor in
                 self.isFetchingLyrics = true
                 self.currentLyrics = ""
                 self.chorusMarkers = []
-                if await self.fetchLyricsFromChineseMusicPlatform(platform: platform, title: title, artist: artist) {
+                if await self.fetchLyricsFromChineseMusicPlatform(platform: platform, title: title, artist: artist, requestID: requestID) {
                     return
                 }
-                await self.fetchLyricsFromWeb(title: title, artist: artist)
+                await self.fetchLyricsFromWeb(title: title, artist: artist, requestID: requestID)
             }
             return
         }
@@ -830,7 +846,7 @@ class MusicManager: ObservableObject {
             Task { @MainActor in
                 let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music")
                 guard !runningApps.isEmpty else {
-                    await self.fetchLyricsFromWeb(title: title, artist: artist)
+                    await self.fetchLyricsFromWeb(title: title, artist: artist, requestID: requestID)
                     return
                 }
 
@@ -861,6 +877,7 @@ class MusicManager: ObservableObject {
                     end tell
                     """
                     if let result = try await AppleScriptHelper.execute(script), let lyricsString = result.stringValue, !lyricsString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        guard self.lyricsRequestID == requestID else { return }
                         self.currentLyrics = lyricsString.trimmingCharacters(in: .whitespacesAndNewlines)
                         self.isFetchingLyrics = false
                         self.syncedLyrics = []
@@ -870,24 +887,25 @@ class MusicManager: ObservableObject {
                 } catch {
                     // fall through to web lookup
                 }
-                await self.fetchLyricsFromWeb(title: title, artist: artist)
+                await self.fetchLyricsFromWeb(title: title, artist: artist, requestID: requestID)
             }
         } else {
             Task { @MainActor in
                 self.isFetchingLyrics = true
                 self.currentLyrics = ""
                 self.chorusMarkers = []
-                await self.fetchLyricsFromWeb(title: title, artist: artist)
+                await self.fetchLyricsFromWeb(title: title, artist: artist, requestID: requestID)
             }
         }
     }
 
     @MainActor
-    private func fetchLyricsFromChineseMusicPlatform(platform: ChineseMusicPlatform, title: String, artist: String) async -> Bool {
+    private func fetchLyricsFromChineseMusicPlatform(platform: ChineseMusicPlatform, title: String, artist: String, requestID: UUID) async -> Bool {
         guard let result = await chineseMusicLyricsProvider.fetchLyrics(platform: platform, title: title, artist: artist),
               !result.plainLyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return false
         }
+        guard lyricsRequestID == requestID else { return true }
 
         self.currentLyrics = result.plainLyrics.trimmingCharacters(in: .whitespacesAndNewlines)
         if let synced = result.syncedLyrics, !synced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -907,11 +925,12 @@ class MusicManager: ObservableObject {
     }
 
     @MainActor
-    private func fetchLyricsFromWeb(title: String, artist: String) async {
+    private func fetchLyricsFromWeb(title: String, artist: String, requestID: UUID) async {
         let cleanTitle = normalizedQuery(title)
         let cleanArtist = normalizedQuery(artist)
         guard let encodedTitle = cleanTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let encodedArtist = cleanArtist.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            guard lyricsRequestID == requestID else { return }
             self.currentLyrics = ""
             self.isFetchingLyrics = false
             self.chorusMarkers = []
@@ -921,6 +940,7 @@ class MusicManager: ObservableObject {
         // LRCLIB simple search (no auth): https://lrclib.net/api/search?track_name=...&artist_name=...
         let urlString = "https://lrclib.net/api/search?track_name=\(encodedTitle)&artist_name=\(encodedArtist)"
         guard let url = URL(string: urlString) else {
+            guard lyricsRequestID == requestID else { return }
             self.currentLyrics = ""
             self.isFetchingLyrics = false
             self.chorusMarkers = []
@@ -928,6 +948,7 @@ class MusicManager: ObservableObject {
         }
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
+            guard lyricsRequestID == requestID else { return }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 self.currentLyrics = ""
                 self.isFetchingLyrics = false
@@ -955,6 +976,7 @@ class MusicManager: ObservableObject {
                 self.chorusMarkers = []
             }
         } catch {
+            guard lyricsRequestID == requestID else { return }
             self.currentLyrics = ""
             self.isFetchingLyrics = false
             self.syncedLyrics = []
@@ -1027,7 +1049,18 @@ class MusicManager: ObservableObject {
     }
 
     func lyricLine(at elapsed: Double) -> String {
-        guard !syncedLyrics.isEmpty else { return currentLyrics }
+        activeLyricLine(at: elapsed).text
+    }
+
+    func activeLyricLine(at elapsed: Double) -> ActiveLyricLine {
+        guard !syncedLyrics.isEmpty else {
+            return ActiveLyricLine(
+                text: plainLyricLine(at: elapsed),
+                startTime: nil,
+                nextStartTime: nil
+            )
+        }
+
         // Binary search for last line with time <= elapsed
         var low = 0
         var high = syncedLyrics.count - 1
@@ -1041,7 +1074,12 @@ class MusicManager: ObservableObject {
                 high = mid - 1
             }
         }
-        return syncedLyrics[idx].text
+
+        return ActiveLyricLine(
+            text: syncedLyrics[idx].text,
+            startTime: syncedLyrics[idx].time,
+            nextStartTime: idx + 1 < syncedLyrics.count ? syncedLyrics[idx + 1].time : nil
+        )
     }
 
     func plainLyricLine(at elapsed: Double) -> String {
