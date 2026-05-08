@@ -53,4 +53,3 @@ final class FullscreenMediaDetector: ObservableObject {
         self.fullscreenStatus = newStatus
     }
 }
-

@@ -26,6 +26,8 @@ struct ContentView: View {
     @State private var hoverTask: Task<Void, Never>?
     @State private var isHovering: Bool = false
     @State private var anyDropDebounceTask: Task<Void, Never>?
+    @State private var lyricsRestoreTask: Task<Void, Never>?
+    @State private var suppressMusicLiveLyrics: Bool = false
 
     @State private var gestureProgress: CGFloat = .zero
 
@@ -34,6 +36,8 @@ struct ContentView: View {
     @Namespace var albumArtNamespace
 
     @Default(.useMusicVisualizer) var useMusicVisualizer
+    @Default(.showLyricsBelowMusicLive) var showLyricsBelowMusicLive
+    @Default(.appLanguage) var appLanguage
 
     @Default(.showNotHumanFace) var showNotHumanFace
 
@@ -42,6 +46,26 @@ struct ContentView: View {
 
     private let extendedHoverPadding: CGFloat = 30
     private let zeroHeightHoverPadding: CGFloat = 10
+
+    private var musicLiveSideItemSize: CGFloat {
+        max(0, vm.effectiveClosedNotchHeight - 12)
+    }
+
+    private var musicLiveNotchAvoidanceWidth: CGFloat {
+        max(0, vm.closedNotchSize.width - cornerRadiusInsets.closed.top)
+    }
+
+    private var musicLiveActivityWidth: CGFloat {
+        vm.closedNotchSize.width + (2 * musicLiveSideItemSize)
+    }
+
+    private var musicLiveLyricsHeight: CGFloat {
+        max(18, min(22, vm.effectiveClosedNotchHeight * 0.62))
+    }
+
+    private var musicLiveLyricsFontSize: CGFloat {
+        max(13, min(18, musicLiveLyricsHeight - 2))
+    }
 
     private var topCornerRadius: CGFloat {
        ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
@@ -78,6 +102,15 @@ struct ContentView: View {
         }
 
         return chinWidth
+    }
+
+    private var shouldShowMusicLiveLyrics: Bool {
+        showLyricsBelowMusicLive
+            && vm.notchState == .closed
+            && !vm.hideOnClosed
+            && !suppressMusicLiveLyrics
+            && coordinator.musicLiveActivityEnabled
+            && (musicManager.isPlaying || !musicManager.isPlayerIdle)
     }
 
     var body: some View {
@@ -161,6 +194,7 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: vm.notchState) { _, newState in
+                        handleLyricsVisibilityForNotchState(newState)
                         if newState == .closed && isHovering {
                             withAnimation {
                                 isHovering = false
@@ -214,6 +248,7 @@ struct ContentView: View {
         .background(dragDetector)
         .preferredColorScheme(.dark)
         .environmentObject(vm)
+        .environment(\.locale, Locale(identifier: appLanguage.localeIdentifier))
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
 
@@ -288,8 +323,23 @@ struct ContentView: View {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
-                          MusicLiveActivity()
-                              .frame(alignment: .center)
+                          VStack(spacing: 0) {
+                              MusicLiveActivity()
+                                  .frame(alignment: .center)
+                              if shouldShowMusicLiveLyrics {
+                                  LyricsLiveExtension()
+                                      .offset(y: isHovering ? -3 : 0)
+                                      .opacity(isHovering ? 0.82 : 1)
+                                      .transition(
+                                          .asymmetric(
+                                              insertion: .opacity.combined(with: .move(edge: .top)),
+                                              removal: .opacity.combined(with: .move(edge: .top))
+                                          )
+                                      )
+                                      .animation(animationSpring, value: isHovering)
+                                      .animation(animationSpring, value: vm.notchState)
+                              }
+                          }
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
                           BoringFaceAnimation()
                        } else if vm.notchState == .open {
@@ -335,6 +385,7 @@ struct ContentView: View {
                               }
                           }
                       }
+
                   }
               }
               .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed))) { view in
@@ -387,7 +438,7 @@ struct ContentView: View {
 
     @ViewBuilder
     func MusicLiveActivity() -> some View {
-        HStack {
+        HStack(spacing: 0) {
             Image(nsImage: musicManager.albumArt)
                 .resizable()
                 .clipped()
@@ -397,16 +448,17 @@ struct ContentView: View {
                 )
                 .matchedGeometryEffect(id: "albumArt", in: albumArtNamespace)
                 .frame(
-                    width: max(0, vm.effectiveClosedNotchHeight - 12),
-                    height: max(0, vm.effectiveClosedNotchHeight - 12)
+                    width: musicLiveSideItemSize,
+                    height: musicLiveSideItemSize
                 )
 
             Rectangle()
                 .fill(.black)
                 .overlay(
                     HStack(alignment: .top) {
-                        if coordinator.expandingView.show
-                            && coordinator.expandingView.type == .music
+                        if !shouldShowMusicLiveLyrics,
+                           coordinator.expandingView.show,
+                           coordinator.expandingView.type == .music
                         {
                             MarqueeText(
                                 .constant(musicManager.songTitle),
@@ -421,7 +473,6 @@ struct ContentView: View {
                                     ? 1 : 0
                             )
                             Spacer(minLength: vm.closedNotchSize.width)
-                            // Song Artist
                             Text(musicManager.artistName)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -440,12 +491,12 @@ struct ContentView: View {
                     }
                 )
                 .frame(
-                    width: (coordinator.expandingView.show
+                    width: (!shouldShowMusicLiveLyrics
+                        && coordinator.expandingView.show
                         && coordinator.expandingView.type == .music
                         && Defaults[.sneakPeekStyles] == .inline)
                         ? 380
-                        : vm.closedNotchSize.width
-                            + -cornerRadiusInsets.closed.top
+                        : musicLiveNotchAvoidanceWidth
                 )
 
             HStack {
@@ -468,15 +519,8 @@ struct ContentView: View {
                 }
             }
             .frame(
-                width: max(
-                    0,
-                    vm.effectiveClosedNotchHeight - 12
-                        + gestureProgress / 2
-                ),
-                height: max(
-                    0,
-                    vm.effectiveClosedNotchHeight - 12
-                ),
+                width: max(0, musicLiveSideItemSize + gestureProgress / 2),
+                height: musicLiveSideItemSize,
                 alignment: .center
             )
         }
@@ -484,6 +528,61 @@ struct ContentView: View {
             height: vm.effectiveClosedNotchHeight,
             alignment: .center
         )
+    }
+
+    @ViewBuilder
+    func LyricsLiveExtension() -> some View {
+        TimelineView(.animation(minimumInterval: 0.25)) { timeline in
+            let line = currentLyricLine(at: timeline.date)
+            let isPersian = line.unicodeScalars.contains { scalar in
+                let value = scalar.value
+                return value >= 0x0600 && value <= 0x06FF
+            }
+
+            HStack(spacing: 0) {
+                lyricsLine(line, isPersian: isPersian)
+                    .padding(.leading, 12)
+                    .padding(.trailing, 12)
+                    .frame(width: musicLiveActivityWidth, alignment: .leading)
+            }
+            .frame(
+                width: musicLiveActivityWidth,
+                height: musicLiveLyricsHeight,
+                alignment: .center
+            )
+            .background(Color.black)
+        }
+    }
+
+    private func lyricsLine(_ line: String, isPersian: Bool) -> some View {
+        OneShotLyricText(
+            text: line,
+            font: isPersian
+                ? .custom("Vazirmatn-Regular", size: musicLiveLyricsFontSize)
+                : .system(size: musicLiveLyricsFontSize, weight: .medium),
+            textColor: musicManager.isFetchingLyrics ? .gray.opacity(0.7) : lyricsAccentColor,
+            startDelay: 0,
+            frameWidth: max(0, musicLiveActivityWidth - 24)
+        )
+        .id(line)
+    }
+
+    private var lyricsAccentColor: Color {
+        Defaults[.playerColorTinting]
+            ? Color(nsColor: musicManager.avgColor).ensureMinimumBrightness(factor: 0.6)
+            : .gray
+    }
+
+    private func currentLyricLine(at date: Date) -> String {
+        if musicManager.isFetchingLyrics {
+            return "Loading lyrics..."
+        }
+
+        if !musicManager.syncedLyrics.isEmpty {
+            return musicManager.lyricLine(at: musicManager.estimatedPlaybackPosition(at: date))
+        }
+
+        return musicManager.plainLyricLine(at: musicManager.estimatedPlaybackPosition(at: date))
     }
 
     @ViewBuilder
@@ -503,6 +602,7 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        hideMusicLiveLyricsDuringNotchTransition()
         withAnimation(animationSpring) {
             vm.open()
         }
@@ -536,6 +636,7 @@ struct ContentView: View {
                           self.isHovering,
                           !self.coordinator.sneakPeek.show else { return }
                     
+                    self.hideMusicLiveLyricsDuringNotchTransition()
                     self.doOpen()
                 }
             }
@@ -554,6 +655,27 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func hideMusicLiveLyricsDuringNotchTransition() {
+        lyricsRestoreTask?.cancel()
+        suppressMusicLiveLyrics = true
+    }
+
+    private func handleLyricsVisibilityForNotchState(_ notchState: NotchState) {
+        lyricsRestoreTask?.cancel()
+
+        if notchState == .open {
+            suppressMusicLiveLyrics = true
+            return
+        }
+
+        suppressMusicLiveLyrics = true
+        lyricsRestoreTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(520))
+            guard !Task.isCancelled else { return }
+            suppressMusicLiveLyrics = false
         }
     }
 
@@ -606,6 +728,76 @@ struct ContentView: View {
 
             if Defaults[.enableHaptics] {
                 haptics.toggle()
+            }
+        }
+    }
+}
+
+private struct OneShotLyricText: View {
+    let text: String
+    let font: Font
+    let textColor: Color
+    let startDelay: Double
+    let frameWidth: CGFloat
+
+    @State private var textSize: CGSize = .zero
+    @State private var offset: CGFloat = 0
+    @State private var scrollTask: Task<Void, Never>?
+
+    private var needsScrolling: Bool {
+        textSize.width > frameWidth
+    }
+
+    var body: some View {
+        ZStack {
+            Text(text)
+                .font(font)
+                .fontWeight(.medium)
+                .foregroundStyle(textColor)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .shadow(color: textColor.opacity(0.22), radius: 3, x: 0, y: 0)
+                .offset(x: needsScrolling ? offset : 0)
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear
+                            .preference(key: SizePreferenceKey.self, value: geometry.size)
+                    }
+                )
+                .onPreferenceChange(SizePreferenceKey.self) { size in
+                    textSize = size
+                    scheduleOneShotScroll()
+                }
+        }
+        .frame(width: frameWidth, alignment: needsScrolling ? .leading : .center)
+        .clipped()
+        .onChange(of: text) {
+            scheduleOneShotScroll()
+        }
+        .onDisappear {
+            scrollTask?.cancel()
+            scrollTask = nil
+        }
+    }
+
+    private func scheduleOneShotScroll() {
+        scrollTask?.cancel()
+        withTransaction(Transaction(animation: nil)) {
+            offset = 0
+        }
+
+        guard needsScrolling else { return }
+
+        scrollTask = Task { @MainActor in
+            if startDelay > 0 {
+                try? await Task.sleep(for: .seconds(startDelay))
+            }
+            guard !Task.isCancelled else { return }
+
+            let distance = max(0, textSize.width - frameWidth)
+            let duration = max(1.4, min(8, Double(distance / 34)))
+            withAnimation(.linear(duration: duration)) {
+                offset = -distance
             }
         }
     }

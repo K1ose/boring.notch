@@ -68,12 +68,29 @@ enum OptionKeyAction: String, CaseIterable, Identifiable, Defaults.Serializable 
     var id: String { self.rawValue }
 }
 
+enum AppLanguage: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case english = "English"
+    case simplifiedChinese = "简体中文"
+
+    var id: String { self.rawValue }
+
+    var localeIdentifier: String {
+        switch self {
+        case .english:
+            return "en"
+        case .simplifiedChinese:
+            return "zh-Hans"
+        }
+    }
+}
+
 extension Defaults.Keys {
     // MARK: General
     static let menubarIcon = Key<Bool>("menubarIcon", default: true)
     static let showOnAllDisplays = Key<Bool>("showOnAllDisplays", default: false)
     static let automaticallySwitchDisplay = Key<Bool>("automaticallySwitchDisplay", default: true)
     static let releaseName = Key<String>("releaseName", default: "Flying Rabbit 🐇🪽")
+    static let appLanguage = Key<AppLanguage>("appLanguage", default: .english)
     
     // MARK: Behavior
     static let minimumHoverDuration = Key<TimeInterval>("minimumHoverDuration", default: 0.3)
@@ -129,6 +146,7 @@ extension Defaults.Keys {
     static let waitInterval = Key<Double>("waitInterval", default: 3)
     static let showShuffleAndRepeat = Key<Bool>("showShuffleAndRepeat", default: false)
     static let enableLyrics = Key<Bool>("enableLyrics", default: false)
+    static let showLyricsBelowMusicLive = Key<Bool>("showLyricsBelowMusicLive", default: false)
     static let musicControlSlots = Key<[MusicControlButton]>(
         "musicControlSlots",
         default: MusicControlButton.defaultLayout

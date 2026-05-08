@@ -17,6 +17,7 @@ import SwiftUIIntrospect
 struct SettingsView: View {
     @State private var selectedTab = "General"
     @State private var accentColorUpdateTrigger = UUID()
+    @Default(.appLanguage) private var appLanguage
 
     let updaterController: SPUStandardUpdaterController?
 
@@ -120,6 +121,7 @@ struct SettingsView: View {
         .frame(width: 700)
         .background(Color(NSColor.windowBackgroundColor))
         .tint(.effectiveAccent)
+        .environment(\.locale, Locale(identifier: appLanguage.localeIdentifier))
         .id(accentColorUpdateTrigger)
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AccentColorChanged"))) { _ in
             accentColorUpdateTrigger = UUID()
@@ -147,6 +149,7 @@ struct GeneralSettings: View {
     @Default(.automaticallySwitchDisplay) var automaticallySwitchDisplay
     @Default(.enableGestures) var enableGestures
     @Default(.openNotchOnHover) var openNotchOnHover
+    @Default(.appLanguage) var appLanguage
     
 
     var body: some View {
@@ -188,6 +191,12 @@ struct GeneralSettings: View {
                             name: Notification.Name.automaticallySwitchDisplayChanged, object: nil)
                     }
                     .disabled(showOnAllDisplays)
+
+                Picker("Language", selection: $appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.rawValue).tag(language)
+                    }
+                }
             } header: {
                 Text("System features")
             }
@@ -595,6 +604,7 @@ struct Media: View {
     @Default(.waitInterval) var waitInterval
     @Default(.mediaController) var mediaController
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject var musicManager = MusicManager.shared
     @Default(.hideNotchOption) var hideNotchOption
     @Default(.enableSneakPeek) private var enableSneakPeek
     @Default(.sneakPeekStyles) var sneakPeekStyles
@@ -684,6 +694,24 @@ struct Media: View {
                         Text("Show lyrics below artist name")
                         customBadge(text: "Beta")
                     }
+                }
+                Defaults.Toggle(key: .showLyricsBelowMusicLive) {
+                    HStack {
+                        Text("Show lyrics below music live activity")
+                        customBadge(text: "Beta")
+                    }
+                }
+                HStack {
+                    Text("Detected music app")
+                    Spacer()
+                    Text(musicManager.detectedMusicAppName)
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Lyrics source")
+                    Spacer()
+                    Text(musicManager.lyricsProviderName)
+                        .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Media controls")

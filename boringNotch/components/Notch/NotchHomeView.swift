@@ -162,12 +162,11 @@ struct MusicControlsView: View {
                         return min(max(progressed, 0), musicManager.songDuration)
                     }()
                     let line: String = {
-                        if musicManager.isFetchingLyrics { return "Loading lyrics…" }
+                        if musicManager.isFetchingLyrics { return "Loading lyrics..." }
                         if !musicManager.syncedLyrics.isEmpty {
                             return musicManager.lyricLine(at: currentElapsed)
                         }
-                        let trimmed = musicManager.currentLyrics.trimmingCharacters(in: .whitespacesAndNewlines)
-                        return trimmed.isEmpty ? "No lyrics found" : trimmed.replacingOccurrences(of: "\n", with: " ")
+                        return musicManager.plainLyricLine(at: currentElapsed)
                     }()
                     let isPersian = line.unicodeScalars.contains { scalar in
                         let v = scalar.value
@@ -201,7 +200,8 @@ struct MusicControlsView: View {
                 timestampDate: musicManager.timestampDate,
                 elapsedTime: musicManager.elapsedTime,
                 playbackRate: musicManager.playbackRate,
-                isPlaying: musicManager.isPlaying
+                isPlaying: musicManager.isPlaying,
+                chorusMarkers: musicManager.chorusMarkers
             ) { newValue in
                 MusicManager.shared.seek(to: newValue)
             }
@@ -477,6 +477,7 @@ struct MusicSliderView: View {
     let elapsedTime: Double
     let playbackRate: Double
     let isPlaying: Bool
+    let chorusMarkers: [Double]
     var onValueChange: (Double) -> Void
 
 
@@ -490,6 +491,7 @@ struct MusicSliderView: View {
                     : Defaults[.sliderColor] == SliderColorEnum.accent ? .effectiveAccent : .white,
                 dragging: $dragging,
                 lastDragged: $lastDragged,
+                markers: chorusMarkers,
                 onValueChange: onValueChange
             )
             .frame(height: 10, alignment: .center)
@@ -532,6 +534,7 @@ struct CustomSlider: View {
     var color: Color = .white
     @Binding var dragging: Bool
     @Binding var lastDragged: Date
+    var markers: [Double] = []
     var onValueChange: ((Double) -> Void)?
     var onDragChange: ((Double) -> Void)?
 
@@ -552,6 +555,14 @@ struct CustomSlider: View {
                 Rectangle()
                     .fill(color)
                     .frame(width: filledTrackWidth, height: height)
+
+                ForEach(validMarkerPositions(width: width), id: \.self) { xPosition in
+                    Capsule()
+                        .fill(Color.white.opacity(0.9))
+                        .frame(width: dragging ? 4 : 3, height: dragging ? 14 : 11)
+                        .shadow(color: color.opacity(0.45), radius: 3, x: 0, y: 0)
+                        .offset(x: xPosition - 1.5)
+                }
             }
             .cornerRadius(height / 2)
             .frame(height: 10)
@@ -574,5 +585,17 @@ struct CustomSlider: View {
             )
             .animation(.spring(response: 0.35, dampingFraction: 0.7), value: dragging)
         }
+    }
+
+    private func validMarkerPositions(width: CGFloat) -> [CGFloat] {
+        let rangeSpan = range.upperBound - range.lowerBound
+        guard rangeSpan > 0 else { return [] }
+
+        return markers
+            .filter { $0 > range.lowerBound && $0 < range.upperBound }
+            .map { marker in
+                let progress = (marker - range.lowerBound) / rangeSpan
+                return CGFloat(min(max(progress, 0), 1)) * width
+            }
     }
 }
