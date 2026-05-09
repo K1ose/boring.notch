@@ -624,7 +624,6 @@ class MusicManager: ObservableObject {
 
         // Set new active controller
         activeController = controller
-        
         self.canFavoriteTrack = controller.supportsFavorite
 
         // Get current state from active controller

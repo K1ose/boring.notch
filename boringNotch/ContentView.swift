@@ -64,7 +64,7 @@ struct ContentView: View {
     }
 
     private var musicLiveLyricsFontSize: CGFloat {
-        max(13, min(18, musicLiveLyricsHeight - 2))
+        max(11, min(15, musicLiveLyricsHeight - 5))
     }
 
     private var topCornerRadius: CGFloat {
@@ -559,7 +559,7 @@ struct ContentView: View {
             text: line.text,
             font: isPersian
                 ? .custom("Vazirmatn-Regular", size: musicLiveLyricsFontSize)
-                : .system(size: musicLiveLyricsFontSize, weight: .medium),
+                : .custom("SF Pro Text", size: musicLiveLyricsFontSize).weight(.medium),
             textColor: musicManager.isFetchingLyrics ? .gray.opacity(0.7) : lyricsAccentColor,
             startDelay: 0,
             availableDuration: line.availableDuration,
